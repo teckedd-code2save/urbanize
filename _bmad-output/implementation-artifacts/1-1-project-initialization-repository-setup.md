@@ -87,6 +87,11 @@ N/A
 - Initialized shadcn with Slate coloring and CSS variable support.
 - Configured Inter and JetBrains Mono fonts in `src/app/layout.tsx` and `src/app/globals.css`.
 - Successfully started Next.js dev server on port 3000 and verified HTTP 200 response.
+- ✅ Resolved review finding [High]: Updated `--primary` CSS variable to sky-500 OKLCH value (`oklch(0.623 0.194 233)`) in `globals.css`.
+- ✅ Resolved review finding [High]: Updated metadata title/description from boilerplate to "Urbanize – Urban Parameter Calculator".
+- ✅ Resolved review finding [Medium]: Fixed package name from `urbanize-temp` to `urbanize` in `package.json`.
+- ✅ Resolved review finding [Medium]: Replaced boilerplate metadata with project-appropriate title and description in `layout.tsx`.
+- ✅ Resolved review finding [Medium]: Ran `git init` and committed initial project state.
 
 ### File List
 
@@ -96,9 +101,18 @@ N/A
 - `package.json`
 - `package-lock.json`
 - `postcss.config.mjs`
+- `public/file.svg`
+- `public/globe.svg`
+- `public/next.svg`
+- `public/vercel.svg`
+- `public/window.svg`
 - `src/app/favicon.ico`
 - `src/app/globals.css`
 - `src/app/layout.tsx`
 - `src/app/page.tsx`
 - `src/lib/utils.ts`
 - `tsconfig.json`
+
+### Change Log
+
+- (2026-02-19) Addressed code review findings – 5 items resolved: sky-500 primary color, metadata, package name, and git init.
