@@ -1,0 +1,11 @@
+There is a small thing i forgot to add
+
+The Google map allows you to view a particular site at different time periods 
+
+So you can see the level of development at a place say 5yrs ago and say 1 Yr ago
+
+So I want to be able to pick the various data I talked of within circular distance or areas but also at different time periods say the same site today and say 5yrs ago
+
+How does the variables change over time
+
+Hope you get me
