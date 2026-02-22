@@ -1,8 +1,10 @@
 'use client';
 
 import * as React from 'react';
-import Map from 'react-map-gl';
+import Map, { MapProvider } from 'react-map-gl';
 import { AlertTriangle } from 'lucide-react';
+
+import { CitySearch } from './city-search';
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 
@@ -22,17 +24,24 @@ export function BaseMap() {
     }
 
     return (
-        <div className="h-full w-full">
-            <Map
-                mapboxAccessToken={MAPBOX_TOKEN}
-                initialViewState={{
-                    longitude: -0.1276, // Default to London (per PRD city focus)
-                    latitude: 51.5072,
-                    zoom: 10
-                }}
-                style={{ width: '100%', height: '100%' }}
-                mapStyle="mapbox://styles/mapbox/satellite-v9"
-            />
-        </div>
+        <MapProvider>
+            <div className="h-full w-full relative">
+                <Map
+                    id="main-map"
+                    mapboxAccessToken={MAPBOX_TOKEN}
+                    initialViewState={{
+                        longitude: -0.1276, // Default to London (per PRD city focus)
+                        latitude: 51.5072,
+                        zoom: 11
+                    }}
+                    style={{ width: '100%', height: '100%' }}
+                    mapStyle="mapbox://styles/mapbox/satellite-v9"
+                />
+
+                <div className="absolute top-4 left-4 z-10">
+                    <CitySearch />
+                </div>
+            </div>
+        </MapProvider>
     );
 }
