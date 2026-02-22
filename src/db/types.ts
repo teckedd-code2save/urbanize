@@ -16,6 +16,7 @@
 //   updatedAt: Date | null;
 // }
 
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface Database {
     // Tables will be added here as migrations are applied.
     // Example: users: UsersTable;

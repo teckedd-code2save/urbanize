@@ -8,23 +8,27 @@
     "start": "next start",
     "lint": "eslint",
     "db:migrate": "tsx src/db/migrate.ts",
-    "db:test": "tsx -e \"import('./src/db/index').then(({ db }) => db.executeQuery({ sql: 'SELECT PostGIS_Version() AS version', parameters: [] }).then(r => { console.log('PostGIS version:', r.rows[0]); process.exit(0); }).catch(e => { console.error(e); process.exit(1); })).catch(e => { console.error(e); process.exit(1); })\""
+    "db:test": "tsx src/db/test-connection.ts"
   },
   "dependencies": {
+    "@clerk/nextjs": "^6.38.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^17.3.1",
     "kysely": "^0.28.11",
     "lucide-react": "^0.575.0",
+    "mapbox-gl": "^3.18.1",
     "next": "16.1.6",
     "pg": "^8.18.0",
     "radix-ui": "^1.4.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "react-map-gl": "^7.1.9",
     "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/mapbox-gl": "^3.4.1",
     "@types/node": "^20",
     "@types/pg": "^8.16.0",
     "@types/react": "^19",

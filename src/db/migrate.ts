@@ -6,10 +6,11 @@
  * loading env vars to avoid ES module hoisting issues.
  */
 import { config } from 'dotenv';
-// Load env vars BEFORE creating the db connection
-config({ path: '.env.local' });
-
 import * as path from 'path';
+// Load env vars BEFORE creating the db connection.
+// Use process.cwd() to anchor the path regardless of where the script is invoked from.
+config({ path: path.resolve(process.cwd(), '.env.local') });
+
 import * as fs from 'fs/promises';
 import { CamelCasePlugin, FileMigrationProvider, Kysely, Migrator, PostgresDialect } from 'kysely';
 import { Pool } from 'pg';
