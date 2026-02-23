@@ -43,13 +43,13 @@ development_status:
   epic-1: in-progress
   1-1-project-initialization-repository-setup: done
   1-2-database-orm-configuration: done
-  1-3-user-authentication-integration: review
+  1-3-user-authentication-integration: done
   1-4-mapbox-integration-base-map: done
   epic-1-retrospective: optional
 
-  epic-2: backlog
-  2-1-city-search-map-positioning: backlog
-  2-2-circle-drawing-interaction: backlog
+  epic-2: in-progress
+  2-1-city-search-map-positioning: done
+  2-2-circle-drawing-interaction: done
   2-3-job-queue-architecture-bullmq: backlog
   2-4-overpass-api-client-rate-limiting: backlog
   2-5-data-caching-confidence-analysis: backlog

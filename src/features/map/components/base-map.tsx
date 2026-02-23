@@ -5,10 +5,34 @@ import Map, { MapProvider } from 'react-map-gl';
 import { AlertTriangle } from 'lucide-react';
 
 import { CitySearch } from './city-search';
+import { CircleDrawer } from './circle-drawer';
+import { DrawControl } from './draw-control';
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 
 export function BaseMap() {
+    const [drawingState, setDrawingState] = React.useState<'idle' | 'drawing' | 'drawn'>('idle');
+    const [circleCenter, setCircleCenter] = React.useState<[number, number] | null>(null);
+    const [circleRadiusKm, setCircleRadiusKm] = React.useState<number>(0);
+
+    const handleToggleDraw = React.useCallback(() => {
+        setDrawingState(prev => {
+            if (prev !== 'drawing') {
+                // Entering draw mode from idle OR re-drawing after a completed circle
+                setCircleCenter(null);
+                setCircleRadiusKm(0);
+                return 'drawing';
+            }
+            return 'idle';
+        });
+    }, []);
+
+    const handleClearDraw = React.useCallback(() => {
+        setDrawingState('idle');
+        setCircleCenter(null);
+        setCircleRadiusKm(0);
+    }, []);
+
     if (!MAPBOX_TOKEN || MAPBOX_TOKEN === 'pk.YOUR_MAPBOX_TOKEN') {
         return (
             <div className="flex h-full w-full flex-col items-center justify-center bg-muted/20 p-6 text-center">
@@ -36,10 +60,26 @@ export function BaseMap() {
                     }}
                     style={{ width: '100%', height: '100%' }}
                     mapStyle="mapbox://styles/mapbox/satellite-v9"
-                />
+                >
+                    <CircleDrawer
+                        drawingState={drawingState}
+                        circleCenter={circleCenter}
+                        circleRadiusKm={circleRadiusKm}
+                        onUpdateCircle={React.useCallback((center: [number, number], radius: number) => {
+                            setCircleCenter(center);
+                            setCircleRadiusKm(radius);
+                        }, [])}
+                        onDrawingComplete={React.useCallback(() => setDrawingState('drawn'), [])}
+                    />
+                </Map>
 
-                <div className="absolute top-4 left-4 z-10">
+                <div className="absolute top-4 left-4 z-10 flex flex-col gap-4">
                     <CitySearch />
+                    <DrawControl
+                        drawingState={drawingState}
+                        onToggleDraw={handleToggleDraw}
+                        onClear={handleClearDraw}
+                    />
                 </div>
             </div>
         </MapProvider>
