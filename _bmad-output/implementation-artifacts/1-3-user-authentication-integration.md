@@ -1,6 +1,6 @@
 # Story 1.3: User Authentication Integration
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -278,6 +278,8 @@ Antigravity (PLACEHOLDER_M37)
 - ✅ Added `src/app/(auth)/sign-in` and `src/app/(auth)/sign-up` routes using Clerk SDK components.
 - ✅ Added `src/app/(dashboard)/layout.tsx` and protected stub `src/app/(dashboard)/map/page.tsx`.
 - ✅ Modified `src/app/page.tsx` to include `SignedIn` and `SignedOut` components linking appropriately.
+- ✅ [AI-Review] Protected layout with `await auth()`.
+- ✅ [AI-Review] Added user ID display overlay to `BaseMap` parent page.
 
 ### File List
 

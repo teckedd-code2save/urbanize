@@ -50,7 +50,7 @@ development_status:
   epic-2: in-progress
   2-1-city-search-map-positioning: done
   2-2-circle-drawing-interaction: done
-  2-3-job-queue-architecture-bullmq: backlog
+  2-3-job-queue-architecture-bullmq: review
   2-4-overpass-api-client-rate-limiting: backlog
   2-5-data-caching-confidence-analysis: backlog
   epic-2-retrospective: optional

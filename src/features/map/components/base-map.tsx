@@ -33,6 +33,15 @@ export function BaseMap() {
         setCircleRadiusKm(0);
     }, []);
 
+    const handleUpdateCircle = React.useCallback((center: [number, number], radius: number) => {
+        setCircleCenter(center);
+        setCircleRadiusKm(radius);
+    }, []);
+
+    const handleDrawingComplete = React.useCallback(() => {
+        setDrawingState('drawn');
+    }, []);
+
     if (!MAPBOX_TOKEN || MAPBOX_TOKEN === 'pk.YOUR_MAPBOX_TOKEN') {
         return (
             <div className="flex h-full w-full flex-col items-center justify-center bg-muted/20 p-6 text-center">
@@ -65,11 +74,8 @@ export function BaseMap() {
                         drawingState={drawingState}
                         circleCenter={circleCenter}
                         circleRadiusKm={circleRadiusKm}
-                        onUpdateCircle={React.useCallback((center: [number, number], radius: number) => {
-                            setCircleCenter(center);
-                            setCircleRadiusKm(radius);
-                        }, [])}
-                        onDrawingComplete={React.useCallback(() => setDrawingState('drawn'), [])}
+                        onUpdateCircle={handleUpdateCircle}
+                        onDrawingComplete={handleDrawingComplete}
                     />
                 </Map>
 
