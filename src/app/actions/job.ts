@@ -1,13 +1,17 @@
 'use server'
 
+import { auth } from '@clerk/nextjs/server';
 import { z } from 'zod';
-import { dataFetchQueue } from '../../lib/queue';
-
-const addJobSchema = z.object({
-    message: z.string().min(1)
-});
+import { dataFetchQueue } from '@/lib/queue';
+import { addJobSchema } from '@/lib/job-schema';
 
 export async function addTestJob(formData: FormData) {
+    const { userId } = await auth();
+
+    if (!userId) {
+        return { success: false, error: 'Unauthorized' };
+    }
+
     const result = addJobSchema.safeParse({
         message: formData.get('message'),
     });
