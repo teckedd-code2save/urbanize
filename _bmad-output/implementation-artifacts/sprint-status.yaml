@@ -52,7 +52,7 @@ development_status:
   2-2-circle-drawing-interaction: done
   2-3-job-queue-architecture-bullmq: done
   2-4-overpass-api-client-rate-limiting: done
-  2-5-data-caching-confidence-analysis: backlog
+  2-5-data-caching-confidence-analysis: done
   epic-2-retrospective: optional
 
   epic-3: backlog
