@@ -6,7 +6,10 @@ export const addJobSchema = z.object({
     message: z.string().optional(),
     query: z.string().min(5).max(50000).refine(q => q.includes('[out:json]'), {
         message: 'Query must be a valid OSM JSON query and include [out:json]'
-    }).optional()
+    }).optional(),
+    lat: z.number().optional(),
+    lon: z.number().optional(),
+    radiusKm: z.number().optional(),
 });
 
 export const OsmElementSchema = z.object({

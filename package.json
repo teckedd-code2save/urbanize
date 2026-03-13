@@ -10,7 +10,7 @@
         "lint": "eslint",
         "db:migrate": "tsx src/db/migrate.ts",
         "db:test": "tsx src/db/test-connection.ts",
-        "worker": "tsx worker/index.ts",
+        "worker": "tsx --env-file=.env.local worker/index.ts",
         "test": "tsx --env-file=.env.local --test tests/**/*.test.ts"
     },
     "dependencies": {

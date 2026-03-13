@@ -2,6 +2,8 @@ import { Worker, Job, UnrecoverableError } from 'bullmq';
 import { redis } from '@/lib/redis';
 import { DATA_FETCH_QUEUE_NAME, TestJobData, OsmResponseSchema, addJobSchema } from '@/lib/job-schema';
 import crypto from 'node:crypto';
+import { processAndInsertGeometry, elementToWkt } from '@/lib/geometry';
+import { calculateBuildingDensity, calculateRoadDensity } from '@/lib/density';
 
 type JobReturnData = {
     success: boolean;
@@ -26,20 +28,33 @@ export const worker = new Worker<TestJobData, JobReturnData, string>(
                 throw new UnrecoverableError(`Invalid job payload: ${validationResult.error.message}`);
             }
 
-            const query = job.data.query || '[out:json][timeout:25];node(51.5,-0.1,51.51,-0.09);out;';
+            let query = job.data.query || '[out:json][timeout:25];node(51.5,-0.1,51.51,-0.09);out geom;';
+            // Ensure Overpass returns geometries so our WKT generation doesn't fail
+            if (!query.includes('geom') && query.includes('out')) {
+                query = query.replace(/out(?:([^;\n]*))?;/g, (match, opts) => {
+                    return (opts && opts.includes('geom')) ? match : `out ${opts || ''} geom;`.replace(/\s+/g, ' ');
+                });
+            }
 
             // Extract bbox for area evaluation: node(minLat,minLon,maxLat,maxLon)
             const bboxMatch = query.match(/\(([-.\d]+)\s*,\s*([-.\d]+)\s*,\s*([-.\d]+)\s*,\s*([-.\d]+)\)/);
-            let areaSqKm = 10; // Default fallback area
-            if (bboxMatch) {
+            let areaSqKm = 10;
+            let midLat = job.data.lat || 0;
+            let midLon = job.data.lon || 0;
+            let radiusKm = job.data.radiusKm || 2;
+
+            if (job.data.lat && job.data.lon && job.data.radiusKm) {
+                areaSqKm = Math.PI * radiusKm * radiusKm;
+            } else if (bboxMatch) {
                 const parts = bboxMatch.slice(1, 5).map(Number);
                 if (parts.length === 4 && !parts.some(isNaN)) {
                     const [minLat, minLon, maxLat, maxLon] = parts;
-                    // Rough approx: 1 deg lat = 111km, 1 deg lon at lat = 111 * cos(lat)
-                    const midLat = (minLat + maxLat) / 2;
+                    midLat = (minLat + maxLat) / 2;
+                    midLon = (minLon + maxLon) / 2;
                     const heightKm = Math.abs(maxLat - minLat) * 111.32;
                     const widthKm = Math.abs(maxLon - minLon) * 111.32 * Math.cos(midLat * (Math.PI / 180));
                     areaSqKm = heightKm * widthKm;
+                    radiusKm = Math.hypot(heightKm / 2, widthKm / 2);
                 }
             }
 
@@ -61,6 +76,29 @@ export const worker = new Worker<TestJobData, JobReturnData, string>(
 
                 const density = elementsCount / (areaSqKm || 1);
                 const isLowConfidence = density < MIN_EXPECTED_DENSITY_PER_SQ_KM;
+
+                // M2 Fix: Cached path must also calculate and store density.
+                // Without this, repeated queries for the same area never persist a density row.
+                try {
+                    const densityResult = await calculateBuildingDensity({
+                        jobId: job.id || `fallback-${Date.now()}`,
+                        lat: midLat,
+                        lon: midLon,
+                        radiusKm
+                    });
+                    console.log(`[Worker] Calculated Building Density (CACHED path) for job ${job.id}: ${densityResult.buildingDensityPct.toFixed(2)}%`);
+
+                    const roadDensityResult = await calculateRoadDensity({
+                        jobId: job.id || `fallback-${Date.now()}`,
+                        lat: midLat,
+                        lon: midLon,
+                        radiusKm
+                    });
+                    console.log(`[Worker] Calculated Road Density (CACHED path) for job ${job.id}: ${roadDensityResult.roadDensity.toFixed(4)} km/km²`);
+                } catch (densityError) {
+                    console.error(`[Worker] Error calculating building or road density (CACHED path) for job ${job.id}:`, densityError);
+                    throw new Error(`Failed to calculate density: ${densityError instanceof Error ? densityError.message : String(densityError)}`);
+                }
 
                 console.log(`[Worker] Finished processing job ${job.id} (CACHED). Elements found: ${elementsCount}, Density: ${density.toFixed(2)}, LowConf: ${isLowConfidence}`);
                 return {
@@ -121,6 +159,62 @@ export const worker = new Worker<TestJobData, JobReturnData, string>(
 
             const density = elementsCount / (areaSqKm || 1);
             const isLowConfidence = density < MIN_EXPECTED_DENSITY_PER_SQ_KM;
+
+            // Geometry processing and insertion
+            const geometries = [];
+            for (const element of parsedData.elements) {
+                const wkt = elementToWkt(element);
+
+                if (wkt) {
+                    geometries.push({
+                        osmId: element.id,
+                        osmType: element.type,
+                        tags: element.tags || {},
+                        wkt
+                    });
+                }
+            }
+
+            if (geometries.length > 0) {
+                try {
+                    await processAndInsertGeometry(geometries);
+                    console.log(`[Worker] Inserted ${geometries.length} geometries for job ${job.id}`);
+                } catch (dbError) {
+                    console.error(`[Worker] Error inserting geometries for job ${job.id}:`, dbError);
+                    throw new Error(`Failed to insert geometries: ${dbError instanceof Error ? dbError.message : String(dbError)}`);
+                }
+            }
+
+            // Calculate Building Density
+            // H3 Fix: radiusKm is now correctly derived above from bbox half-diagonal.
+            try {
+                const densityResult = await calculateBuildingDensity({
+                    jobId: job.id || `fallback-${Date.now()}`,
+                    lat: midLat,
+                    lon: midLon,
+                    radiusKm
+                });
+                console.log(`[Worker] Calculated Building Density for job ${job.id}: ${densityResult.buildingDensityPct.toFixed(2)}%`);
+            } catch (densityError) {
+                // H2 Fix: Density failure must propagate — a successful job requires a stored density.
+                // Previously swallowed silently (and the comment about caching was backwards —
+                // cache write happens AFTER density).
+                console.error(`[Worker] Error calculating building density for job ${job.id}:`, densityError);
+                throw new Error(`Failed to calculate building density: ${densityError instanceof Error ? densityError.message : String(densityError)}`);
+            }
+
+            try {
+                const roadDensityResult = await calculateRoadDensity({
+                    jobId: job.id || `fallback-${Date.now()}`,
+                    lat: midLat,
+                    lon: midLon,
+                    radiusKm
+                });
+                console.log(`[Worker] Calculated Road Density for job ${job.id}: ${roadDensityResult.roadDensity.toFixed(2)} km/km²`);
+            } catch (densityError) {
+                console.error(`[Worker] Error calculating road density for job ${job.id}:`, densityError);
+                throw new Error(`Failed to calculate road density: ${densityError instanceof Error ? densityError.message : String(densityError)}`);
+            }
 
             // Cache Write
             try {
