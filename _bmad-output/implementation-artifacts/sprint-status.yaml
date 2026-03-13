@@ -55,10 +55,10 @@ development_status:
   2-5-data-caching-confidence-analysis: done
   epic-2-retrospective: optional
 
-  epic-3: backlog
-  3-1-geometry-processing-autocorrection: backlog
-  3-2-building-density-calculation-logic: backlog
-  3-3-road-density-calculation-logic: backlog
+  epic-3: in-progress
+  3-1-geometry-processing-autocorrection: done
+  3-2-building-density-calculation-logic: done
+  3-3-road-density-calculation-logic: done
   3-4-visualization-layers-frontend: backlog
   3-5-metric-display-ui: backlog
   epic-3-retrospective: optional

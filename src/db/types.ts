@@ -16,10 +16,30 @@
 //   updatedAt: Date | null;
 // }
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+import { Generated } from 'kysely';
+
+export interface OsmDataTable {
+    id: Generated<number>;
+    osmId: string | number;
+    osmType: string;
+    tags: Record<string, any> | null;
+    geom: any; // PostGIS geometry
+}
+
+export interface UrbanParametersTable {
+    id: Generated<number>;
+    jobId: string;
+    lat: number;
+    lon: number;
+    radiusKm: number;
+    buildingDensityPct: number | null;
+    roadDensity: number | null;
+    createdAt: Generated<Date>;
+}
+
 export interface Database {
-    // Tables will be added here as migrations are applied.
-    // Example: users: UsersTable;
+    osmData: OsmDataTable;
+    urbanParameters: UrbanParametersTable;
 }
 
 /** Canonical shorthand for the Database interface */
