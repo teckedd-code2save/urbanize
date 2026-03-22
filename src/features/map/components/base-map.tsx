@@ -335,6 +335,8 @@ export function BaseMap() {
                             <AnalysisLayers
                                 geoJson={geoJson}
                                 visibleLayers={visibleLayers}
+                                circleCenter={circleCenter}
+                                circleRadiusKm={circleRadiusKm}
                             />
                         )}
                     </Map>
@@ -375,6 +377,23 @@ export function BaseMap() {
                         />
                     )}
                 </div>
+
+                {/* Map legend — shown when analysis is complete */}
+                {analysisStatus === 'completed' && !isComparisonMode && (
+                    <div className="absolute bottom-8 left-4 z-10 rounded-lg bg-background/90 backdrop-blur border border-border/40 px-3 py-2 text-[10px] space-y-1 shadow-lg">
+                        <p className="font-semibold text-[11px] text-foreground mb-1">Legend</p>
+                        <div className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-blue-500 opacity-70" /> Buildings</div>
+                        <div className="flex items-center gap-1.5"><span className="inline-block w-4 h-0.5 bg-orange-400" /> Primary roads</div>
+                        <div className="flex items-center gap-1.5"><span className="inline-block w-4 h-0.5 bg-yellow-400" /> Secondary roads</div>
+                        <div className="flex items-center gap-1.5"><span className="inline-block w-4 h-0.5 bg-gray-300" /> Residential roads</div>
+                        <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-violet-500" /> Transit stops</div>
+                        <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-amber-400" /> Schools</div>
+                        <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500" /> Health</div>
+                        <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500" /> Banks</div>
+                        <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-orange-400" /> Markets / shops</div>
+                        <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-green-500" /> Parks</div>
+                    </div>
+                )}
 
                 {/* Timeline — visible once the circle is drawn, hidden in comparison mode */}
                 {drawingState === 'drawn' && !isComparisonMode && (
