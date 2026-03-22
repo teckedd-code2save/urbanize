@@ -293,8 +293,8 @@ export function BaseMap() {
     }
 
     const splitScreenInitialViewState = {
-        longitude: circleCenter?.[0] ?? -0.1276,
-        latitude: circleCenter?.[1] ?? 51.5072,
+        longitude: circleCenter?.[0] ?? -0.1870,
+        latitude: circleCenter?.[1] ?? 5.6037,
         zoom: 13,
     };
 
@@ -316,8 +316,8 @@ export function BaseMap() {
                         id="main-map"
                         mapboxAccessToken={MAPBOX_TOKEN}
                         initialViewState={{
-                            longitude: -0.1276,
-                            latitude: 51.5072,
+                            longitude: -0.1870,
+                            latitude: 5.6037,
                             zoom: 11
                         }}
                         style={{ width: '100%', height: '100%' }}

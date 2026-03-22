@@ -24,7 +24,7 @@ import { SUPPORTED_CITIES, SupportedCityId } from '../constants';
 
 export function CitySearch() {
     const [open, setOpen] = React.useState(false);
-    const [value, setValue] = React.useState<SupportedCityId | ''>('london');
+    const [value, setValue] = React.useState<SupportedCityId | ''>('accra');
     const { 'main-map': map } = useMap();
 
     const handleSelect = (currentValue: string) => {
