@@ -27,10 +27,22 @@ export async function POST(req: NextRequest) {
             // Use Overpass Attic date filter for historical queries
             const dateFilter = year ? `[date:"${year}-01-01T00:00:00Z"]` : '';
 
-            query = `[out:json][timeout:60]${dateFilter};
+            const bbox = `${minLat},${minLon},${maxLat},${maxLon}`;
+            query = `[out:json][timeout:90]${dateFilter};
 (
-  way["building"](${minLat},${minLon},${maxLat},${maxLon});
-  way["highway"](${minLat},${minLon},${maxLat},${maxLon});
+  way["building"](${bbox});
+  way["highway"](${bbox});
+  node["highway"="bus_stop"](${bbox});
+  node["public_transport"](${bbox});
+  node["amenity"](${bbox});
+  way["amenity"](${bbox});
+  node["shop"](${bbox});
+  node["leisure"](${bbox});
+  way["leisure"](${bbox});
+  way["landuse"](${bbox});
+  node["highway"="taxi"](${bbox});
+  relation["amenity"="taxi"](${bbox});
+  node["amenity"="taxi"](${bbox});
 );
 out geom;`;
         }

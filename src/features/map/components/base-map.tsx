@@ -7,12 +7,13 @@ import { AlertTriangle } from 'lucide-react';
 import { CitySearch } from './city-search';
 import { CircleDrawer } from './circle-drawer';
 import { DrawControl } from './draw-control';
-import { ResultsCard } from './results-card';
+import { MetricsPanel } from './metrics-panel';
 import { AnalysisLayers } from './analysis-layers';
 import { LayerToggle } from './layer-toggle';
 import { TimelineSelector } from './timeline-selector';
 import { SplitScreenMap } from './split-screen-map';
 import { ComparisonCard } from './comparison-card';
+import type { ExtendedMetrics } from '@/lib/extended-metrics';
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 
@@ -39,6 +40,9 @@ export function BaseMap() {
 
     // Timeline State — persisted so the timeline stays visible after analysis
     const [selectedYears, setSelectedYears] = React.useState<{ yearA: number; yearB: number } | null>(null);
+
+    // Extended metrics for single-period mode
+    const [extendedMetrics, setExtendedMetrics] = React.useState<ExtendedMetrics | null>(null);
 
     // Comparison mode state (Time Travel results)
     const [diffMetrics, setDiffMetrics] = React.useState<DiffMetrics | null>(null);
@@ -69,6 +73,7 @@ export function BaseMap() {
         setSelectedYears(null);
         setActiveJobId(null);
         setActiveJobAId(null);
+        setExtendedMetrics(null);
         setDiffMetrics(null);
         setGeoJsonA(null);
         setGeoJsonB(null);
@@ -85,6 +90,7 @@ export function BaseMap() {
                 setSelectedYears(null);
                 setActiveJobId(null);
                 setActiveJobAId(null);
+                setExtendedMetrics(null);
                 setDiffMetrics(null);
                 setGeoJsonA(null);
                 setGeoJsonB(null);
@@ -190,6 +196,7 @@ export function BaseMap() {
         setGeoJson(null);
         setActiveJobId(null);
         setActiveJobAId(null);
+        setExtendedMetrics(null);
         setDiffMetrics(null);
         setGeoJsonA(null);
         setGeoJsonB(null);
@@ -242,9 +249,16 @@ export function BaseMap() {
                     } else {
                         // Normal single-period mode
                         setMetrics(data.metrics);
-                        const geoResponse = await fetch(`/api/analyze/${activeJobId}/geometries`);
-                        const geoData = await geoResponse.json();
+                        const [geoResponse, extResponse] = await Promise.all([
+                            fetch(`/api/analyze/${activeJobId}/geometries`),
+                            fetch(`/api/analyze/${activeJobId}/extended-metrics`),
+                        ]);
+                        const [geoData, extData] = await Promise.all([
+                            geoResponse.json(),
+                            extResponse.json(),
+                        ]);
                         setGeoJson(geoData);
+                        if (!extData.error) setExtendedMetrics(extData);
                     }
 
                     setAnalysisStatus('completed');
@@ -354,9 +368,10 @@ export function BaseMap() {
                             onReset={clearAllState}
                         />
                     ) : (
-                        <ResultsCard
+                        <MetricsPanel
                             status={analysisStatus}
                             metrics={metrics}
+                            extendedMetrics={extendedMetrics}
                         />
                     )}
                 </div>
