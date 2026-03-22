@@ -139,20 +139,20 @@ export async function computeExtendedMetrics(params: ExtendedMetricsParams): Pro
         .selectFrom('osmData')
         .select([
             sql<number>`COALESCE(SUM(
-                ST_Length(ST_Intersection(geom, ${circle})::geography) / 1000
+                ST_Length(ST_Transform(ST_Intersection(geom, ${circle}), 4326)::geography) / 1000
             ), 0)`.as('totalkm'),
             sql<number>`COALESCE(SUM(CASE
                 WHEN tags->>'surface' IN ('asphalt','paved','concrete','cobblestone','sett')
-                THEN ST_Length(ST_Intersection(geom, ${circle})::geography) / 1000
+                THEN ST_Length(ST_Transform(ST_Intersection(geom, ${circle}), 4326)::geography) / 1000
                 ELSE 0 END), 0)`.as('tarredkm'),
             sql<number>`COALESCE(SUM(CASE
                 WHEN tags->>'surface' IN ('unpaved','dirt','gravel','laterite','sand','ground','compacted','mud')
-                THEN ST_Length(ST_Intersection(geom, ${circle})::geography) / 1000
+                THEN ST_Length(ST_Transform(ST_Intersection(geom, ${circle}), 4326)::geography) / 1000
                 ELSE 0 END), 0)`.as('untarredkm'),
             sql<number>`COALESCE(SUM(CASE
                 WHEN tags->>'highway' IN ('footway','path','steps')
                   OR tags->>'footway' = 'sidewalk'
-                THEN ST_Length(ST_Intersection(geom, ${circle})::geography) / 1000
+                THEN ST_Length(ST_Transform(ST_Intersection(geom, ${circle}), 4326)::geography) / 1000
                 ELSE 0 END), 0)`.as('sidewalkkm'),
         ])
         .where(sql<boolean>`tags ? 'highway'`)
