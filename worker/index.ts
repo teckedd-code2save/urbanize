@@ -177,7 +177,7 @@ export const worker = new Worker<TestJobData, JobReturnData, string>(
 
             if (geometries.length > 0) {
                 try {
-                    await processAndInsertGeometry(geometries);
+                    await processAndInsertGeometry(geometries, job.data.year);
                     console.log(`[Worker] Inserted ${geometries.length} geometries for job ${job.id}`);
                 } catch (dbError) {
                     console.error(`[Worker] Error inserting geometries for job ${job.id}:`, dbError);

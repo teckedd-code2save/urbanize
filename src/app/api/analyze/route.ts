@@ -11,20 +11,23 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: validation.error.message }, { status: 400 });
         }
 
-        const { lat, lon, radiusKm } = validation.data;
+        const { lat, lon, radiusKm, year } = validation.data;
         let query = validation.data.query;
 
         // If no query but spatial data is provided, generate a standard Overpass query for urban data
         if (!query && lat !== undefined && lon !== undefined && radiusKm !== undefined) {
-          const deltaLat = radiusKm / 111.32;
-          const deltaLon = radiusKm / (111.32 * Math.cos(lat * (Math.PI / 180)));
-          
-          const minLat = lat - deltaLat;
-          const minLon = lon - deltaLon;
-          const maxLat = lat + deltaLat;
-          const maxLon = lon + deltaLon;
-          
-          query = `[out:json][timeout:60];
+            const deltaLat = radiusKm / 111.32;
+            const deltaLon = radiusKm / (111.32 * Math.cos(lat * (Math.PI / 180)));
+
+            const minLat = lat - deltaLat;
+            const minLon = lon - deltaLon;
+            const maxLat = lat + deltaLat;
+            const maxLon = lon + deltaLon;
+
+            // Use Overpass Attic date filter for historical queries
+            const dateFilter = year ? `[date:"${year}-01-01T00:00:00Z"]` : '';
+
+            query = `[out:json][timeout:60]${dateFilter};
 (
   way["building"](${minLat},${minLon},${maxLat},${maxLon});
   way["highway"](${minLat},${minLon},${maxLat},${maxLon});
@@ -33,7 +36,7 @@ out geom;`;
         }
 
         if (!query) {
-            return NextResponse.json({ error: "Either query or spaital parameters (lat, lon, radiusKm) must be provided." }, { status: 400 });
+            return NextResponse.json({ error: 'Either query or spatial parameters (lat, lon, radiusKm) must be provided.' }, { status: 400 });
         }
 
         const job = await dataFetchQueue.add('analyze-area', {

@@ -55,23 +55,23 @@ development_status:
   2-5-data-caching-confidence-analysis: done
   epic-2-retrospective: optional
 
-  epic-3: in-progress
+  epic-3: done
   3-1-geometry-processing-autocorrection: done
   3-2-building-density-calculation-logic: done
   3-3-road-density-calculation-logic: done
-  3-4-visualization-layers-frontend: backlog
-  3-5-metric-display-ui: backlog
+  3-4-visualization-layers-frontend: done
+  3-5-metric-display-ui: done
   epic-3-retrospective: optional
 
-  epic-4: backlog
-  4-1-timeline-ui-time-period-selection: backlog
-  4-2-server-side-geometric-diff-logic: backlog
-  4-3-split-screen-map-visualization: backlog
-  4-4-change-delta-quantification-display: backlog
+  epic-4: done
+  4-1-timeline-ui-time-period-selection: done
+  4-2-server-side-geometric-diff-logic: done
+  4-3-split-screen-map-visualization: done
+  4-4-change-delta-quantification-display: done
   epic-4-retrospective: optional
 
-  epic-5: backlog
-  5-1-csv-export-generation-server: backlog
-  5-2-citation-string-logic: backlog
-  5-3-download-interface: backlog
+  epic-5: done
+  5-1-csv-export-generation-server: done
+  5-2-citation-string-logic: done
+  5-3-download-interface: done
   epic-5-retrospective: optional

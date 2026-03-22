@@ -10,6 +10,7 @@ export const addJobSchema = z.object({
     lat: z.number().optional(),
     lon: z.number().optional(),
     radiusKm: z.number().optional(),
+    year: z.number().int().min(2000).max(new Date().getFullYear()).optional(),
 });
 
 export const OsmElementSchema = z.object({

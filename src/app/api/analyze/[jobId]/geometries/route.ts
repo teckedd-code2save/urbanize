@@ -22,9 +22,13 @@ export async function GET(
         const { lat, lon, radiusKm } = paramsRecord;
         const radiusMeters = radiusKm * 1000;
 
+        // Optional year filter — when provided, scope geometries to that historical snapshot
+        const yearParam = req.nextUrl.searchParams.get('year');
+        const filterYear = yearParam !== null && yearParam !== '' ? parseInt(yearParam, 10) : undefined;
+
         // Fetch geometries that intersect with the job's defined circle
         // Using ST_AsGeoJSON to get the geometry in a format easily usable on the frontend
-        const rows = await db.selectFrom('osmData')
+        let query = db.selectFrom('osmData')
             .select([
                 'osmId',
                 'osmType',
@@ -33,8 +37,13 @@ export async function GET(
             ])
             .where(
                 sql<boolean>`ST_Intersects(geom, ST_Buffer(ST_Transform(ST_SetSRID(ST_MakePoint(${sql.val(lon)}, ${sql.val(lat)}), 4326), 5070), ${sql.val(radiusMeters)}))`
-            )
-            .execute();
+            );
+
+        if (filterYear !== undefined && !isNaN(filterYear)) {
+            query = query.where('fetchedForYear', '=', filterYear);
+        }
+
+        const rows = await query.execute();
 
         const features = rows.map(row => ({
             type: 'Feature',

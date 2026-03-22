@@ -41,7 +41,7 @@ export async function processAndInsertGeometry(elements: {
     osmType: string;
     tags: any;
     wkt: string;
-}[]) {
+}[], year?: number) {
     if (elements.length === 0) return;
 
     const BATCH_SIZE = 1000;
@@ -52,7 +52,8 @@ export async function processAndInsertGeometry(elements: {
                 osmId: data.osmId,
                 osmType: data.osmType,
                 tags: data.tags,
-                geom: sql`ST_Transform(ST_MakeValid(ST_GeomFromText(${data.wkt}, 4326)), 5070)`
+                geom: sql`ST_Transform(ST_MakeValid(ST_GeomFromText(${data.wkt}, 4326)), 5070)`,
+                fetchedForYear: year ?? null,
             })))
             .execute();
     }

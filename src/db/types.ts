@@ -24,6 +24,7 @@ export interface OsmDataTable {
     osmType: string;
     tags: Record<string, any> | null;
     geom: any; // PostGIS geometry
+    fetchedForYear: number | null;
 }
 
 export interface UrbanParametersTable {
