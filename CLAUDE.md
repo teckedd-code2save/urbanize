@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-pnpm dev            # Next.js dev server (port 3000)
+pnpm dev            # Next.js dev server (port 3002)
 pnpm build          # Production build
 pnpm lint           # ESLint
 pnpm db:migrate     # Run pending Kysely migrations
@@ -27,7 +27,9 @@ Copy `.env.example` to `.env.local`. Required variables:
 - `DATABASE_URL` — PostgreSQL connection string (PostGIS extension must be enabled)
 - `NEXT_PUBLIC_MAPBOX_TOKEN` — Mapbox GL access token
 - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` — Clerk auth
-- Redis is implicitly required (default `localhost:6379`) by both the worker and the BullMQ queue in Next.js
+- `REDIS_URL` — defaults to `redis://127.0.0.1:6379` if unset
+
+**Docker** (optional local stack): `docker-compose up -d` starts PostgreSQL 16 + PostGIS on port **5433** and Redis 7 on port **6380** with persistent volumes. Credentials: `urbanize_user` / `urbanize_pass` / db `urbanize`.
 
 ## Architecture
 
@@ -74,7 +76,7 @@ Road intersections use `ST_Node` topology; proximity distances use `::geography`
 - `src/features/map/components/` — All map UI: `BaseMap` (orchestrator), `CircleDrawer`, `CitySearch`, `DrawControl`, `AnalysisLayers` (buildings + roads + POI markers), `MetricsPanel` (full scrollable metrics), `LayerToggle`, `TimelineSelector`, `SplitScreenMap`, `ComparisonCard`
 - `src/lib/` — `queue.ts`, `redis.ts`, `job-schema.ts`, `geometry.ts`, `density.ts`, `extended-metrics.ts`
 - `src/db/` — Kysely singleton, type definitions, migration runner, migrations
-- `worker/index.ts` — BullMQ Worker; rate-limited to 1 job / 2 s; Overpass responses cached in Redis 24 h
+- `worker/index.ts` — BullMQ Worker; rate-limited to 1 job / 2 s; Overpass responses cached in Redis 24 h (cache key = SHA256 of query). On a cache hit the Overpass fetch is skipped but density calculations still run to persist `urban_parameters`. Invalid payloads throw `UnrecoverableError` (no retry); 429s throw standard `Error` (retried with exponential backoff, 3 attempts).
 - `tests/` — Node.js built-in test runner (`tsx --test`)
 
 ### Database
@@ -90,6 +92,8 @@ Tables:
 - `urban_parameters` — `job_id`, `lat`, `lon`, `radius_km`, `building_density_pct`, `road_density`; unique on `job_id`
 
 **Kysely** with `CamelCasePlugin` — TypeScript uses camelCase, raw SQL uses snake_case column names. Never import `src/db/index.ts` from Client Components.
+
+**Raw SQL alias caveat**: `CamelCasePlugin` transforms `.as('camelCase')` aliases into snake_case. In `sql` template literals, use all-lowercase single-word aliases (e.g. `sql\`... as count\``) to avoid transformation mismatches.
 
 ### Auth
 
