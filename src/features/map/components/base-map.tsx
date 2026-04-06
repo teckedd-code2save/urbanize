@@ -13,9 +13,14 @@ import { LayerToggle } from './layer-toggle';
 import { TimelineSelector } from './timeline-selector';
 import { SplitScreenMap } from './split-screen-map';
 import { ComparisonCard } from './comparison-card';
+import { FeatureDetailPanel } from './feature-detail-panel';
 import type { ExtendedMetrics } from '@/lib/extended-metrics';
+import type { PlaceResult } from '@/lib/google-places';
+import type { TrafficMetrics } from '@/app/api/traffic/route';
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+
+const CLICKABLE_LAYERS = ['osm-buildings', 'osm-roads', 'osm-pois'];
 
 interface DiffMetrics {
     yearA: number | null;
@@ -44,10 +49,18 @@ export function BaseMap() {
     // Extended metrics for single-period mode
     const [extendedMetrics, setExtendedMetrics] = React.useState<ExtendedMetrics | null>(null);
 
+    // Traffic metrics (HERE API, optional)
+    const [trafficMetrics, setTrafficMetrics] = React.useState<TrafficMetrics | null>(null);
+
     // Comparison mode state (Time Travel results)
     const [diffMetrics, setDiffMetrics] = React.useState<DiffMetrics | null>(null);
     const [geoJsonA, setGeoJsonA] = React.useState<any>(null);
     const [geoJsonB, setGeoJsonB] = React.useState<any>(null);
+
+    // Feature click state
+    const [selectedFeature, setSelectedFeature] = React.useState<any>(null);
+    const [selectedPlaceDetails, setSelectedPlaceDetails] = React.useState<PlaceResult | null>(null);
+    const [isLoadingPlace, setIsLoadingPlace] = React.useState(false);
 
     // Refs for stable access inside polling interval closure
     const activeJobAIdRef = React.useRef<string | null>(null);
@@ -77,6 +90,9 @@ export function BaseMap() {
         setDiffMetrics(null);
         setGeoJsonA(null);
         setGeoJsonB(null);
+        setTrafficMetrics(null);
+        setSelectedFeature(null);
+        setSelectedPlaceDetails(null);
     }, []);
 
     const handleToggleDraw = React.useCallback(() => {
@@ -94,6 +110,9 @@ export function BaseMap() {
                 setDiffMetrics(null);
                 setGeoJsonA(null);
                 setGeoJsonB(null);
+                setTrafficMetrics(null);
+                setSelectedFeature(null);
+                setSelectedPlaceDetails(null);
                 return 'drawing';
             }
             return 'idle';
@@ -200,6 +219,7 @@ export function BaseMap() {
         setDiffMetrics(null);
         setGeoJsonA(null);
         setGeoJsonB(null);
+        setTrafficMetrics(null);
     }, []);
 
     // Polling logic for job status
@@ -259,6 +279,15 @@ export function BaseMap() {
                         ]);
                         setGeoJson(geoData);
                         if (!extData.error) setExtendedMetrics(extData);
+
+                        // Fetch traffic data if center is known (fire-and-forget, graceful degradation)
+                        const center = circleCenter; // captured from closure snapshot
+                        if (center) {
+                            fetch(`/api/traffic?lat=${center[1]}&lon=${center[0]}&radiusKm=${circleRadiusKm}`)
+                                .then(r => r.status === 204 ? null : r.json())
+                                .then(t => { if (t && !t.error) setTrafficMetrics(t); })
+                                .catch(() => { /* HERE API not configured — ignore */ });
+                        }
                     }
 
                     setAnalysisStatus('completed');
@@ -277,6 +306,55 @@ export function BaseMap() {
     const toggleLayer = (layer: 'buildings' | 'roads') => {
         setVisibleLayers(prev => ({ ...prev, [layer]: !prev[layer] }));
     };
+
+    // ── Map click handler ────────────────────────────────────────────────────
+    const handleMapClick = React.useCallback(async (event: any) => {
+        if (analysisStatus !== 'completed') return;
+
+        const features: any[] | undefined = event.features;
+        if (!features || features.length === 0) {
+            setSelectedFeature(null);
+            setSelectedPlaceDetails(null);
+            return;
+        }
+
+        const feature = features[0];
+        setSelectedFeature(feature);
+        setSelectedPlaceDetails(null);
+
+        // Enrich POI clicks with Google Places data
+        if (feature.layer?.id === 'osm-pois' && feature.geometry?.type === 'Point') {
+            const [lon, lat] = feature.geometry.coordinates as [number, number];
+            const amenity = feature.properties?.amenity as string | undefined;
+            setIsLoadingPlace(true);
+            try {
+                const res = await fetch(
+                    `/api/places/nearby?lat=${lat}&lon=${lon}${amenity ? `&amenity=${amenity}` : ''}`
+                );
+                if (res.ok) {
+                    const place = await res.json();
+                    if (!place.error) setSelectedPlaceDetails(place);
+                }
+            } catch {
+                // Google Places not configured or network error — show OSM data only
+            } finally {
+                setIsLoadingPlace(false);
+            }
+        }
+    }, [analysisStatus]);
+
+    // ── Cursor — pointer when hovering clickable layers ──────────────────────
+    const handleMouseMove = React.useCallback((event: any) => {
+        if (analysisStatus !== 'completed') return;
+        const map = event.target as any;
+        const features = map.queryRenderedFeatures(event.point, { layers: CLICKABLE_LAYERS });
+        map.getCanvas().style.cursor = features?.length > 0 ? 'pointer' : '';
+    }, [analysisStatus]);
+
+    const handleMouseLeave = React.useCallback((event: any) => {
+        const map = event.target as any;
+        if (map?.getCanvas) map.getCanvas().style.cursor = '';
+    }, []);
 
     if (!MAPBOX_TOKEN || MAPBOX_TOKEN === 'pk.YOUR_MAPBOX_TOKEN') {
         return (
@@ -322,6 +400,10 @@ export function BaseMap() {
                         }}
                         style={{ width: '100%', height: '100%' }}
                         mapStyle="mapbox://styles/mapbox/satellite-v9"
+                        interactiveLayerIds={analysisStatus === 'completed' ? CLICKABLE_LAYERS : []}
+                        onClick={handleMapClick}
+                        onMouseMove={handleMouseMove}
+                        onMouseLeave={handleMouseLeave}
                     >
                         <CircleDrawer
                             drawingState={drawingState}
@@ -374,24 +456,41 @@ export function BaseMap() {
                             status={analysisStatus}
                             metrics={metrics}
                             extendedMetrics={extendedMetrics}
+                            trafficMetrics={trafficMetrics}
                         />
                     )}
                 </div>
 
-                {/* Map legend — shown when analysis is complete */}
+                {/* Feature detail panel — bottom-left, replaces legend when a feature is selected */}
                 {analysisStatus === 'completed' && !isComparisonMode && (
-                    <div className="absolute bottom-8 left-4 z-10 rounded-lg bg-background/90 backdrop-blur border border-border/40 px-3 py-2 text-[10px] space-y-1 shadow-lg">
-                        <p className="font-semibold text-[11px] text-foreground mb-1">Legend</p>
-                        <div className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-blue-500 opacity-70" /> Buildings</div>
-                        <div className="flex items-center gap-1.5"><span className="inline-block w-4 h-0.5 bg-orange-400" /> Primary roads</div>
-                        <div className="flex items-center gap-1.5"><span className="inline-block w-4 h-0.5 bg-yellow-400" /> Secondary roads</div>
-                        <div className="flex items-center gap-1.5"><span className="inline-block w-4 h-0.5 bg-gray-300" /> Residential roads</div>
-                        <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-violet-500" /> Transit stops</div>
-                        <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-amber-400" /> Schools</div>
-                        <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500" /> Health</div>
-                        <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500" /> Banks</div>
-                        <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-orange-400" /> Markets / shops</div>
-                        <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-green-500" /> Parks</div>
+                    <div className="absolute bottom-8 left-4 z-10">
+                        {selectedFeature ? (
+                            <FeatureDetailPanel
+                                feature={selectedFeature}
+                                placeDetails={selectedPlaceDetails}
+                                isLoadingPlace={isLoadingPlace}
+                                onClose={() => {
+                                    setSelectedFeature(null);
+                                    setSelectedPlaceDetails(null);
+                                }}
+                            />
+                        ) : (
+                            /* Map legend — shown when no feature is selected */
+                            <div className="rounded-lg bg-background/90 backdrop-blur border border-border/40 px-3 py-2 text-[10px] space-y-1 shadow-lg">
+                                <p className="font-semibold text-[11px] text-foreground mb-1">Legend</p>
+                                <div className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-blue-500 opacity-70" /> Buildings</div>
+                                <div className="flex items-center gap-1.5"><span className="inline-block w-4 h-0.5 bg-orange-400" /> Primary roads</div>
+                                <div className="flex items-center gap-1.5"><span className="inline-block w-4 h-0.5 bg-yellow-400" /> Secondary roads</div>
+                                <div className="flex items-center gap-1.5"><span className="inline-block w-4 h-0.5 bg-gray-300" /> Residential roads</div>
+                                <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-violet-500" /> Transit stops</div>
+                                <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-amber-400" /> Schools</div>
+                                <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500" /> Health</div>
+                                <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500" /> Banks</div>
+                                <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-orange-400" /> Markets / shops</div>
+                                <div className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-green-500" /> Parks</div>
+                                <p className="text-muted-foreground/70 pt-0.5">Click any feature for details</p>
+                            </div>
+                        )}
                     </div>
                 )}
 

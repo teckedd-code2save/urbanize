@@ -4,18 +4,23 @@ import { DATA_FETCH_QUEUE_NAME, TestJobData, OsmResponseSchema, addJobSchema } f
 import crypto from 'node:crypto';
 import { processAndInsertGeometry, elementToWkt } from '@/lib/geometry';
 import { calculateBuildingDensity, calculateRoadDensity } from '@/lib/density';
+import { isGeeConfigured, fetchOpenBuildings } from '@/lib/earth-engine';
+import { fetchAllPlacesForArea } from '@/lib/google-places';
 
 type JobReturnData = {
     success: boolean;
     processedAt: string;
     dataStats?: {
         elements: number;
+        geeBuildings?: number;
+        googlePlaces?: number;
         lowConfidence?: boolean;
     };
 };
 
 const OVERPASS_API_URL = 'https://overpass-api.de/api/interpreter';
 const USER_AGENT = 'UrbanizeApp/1.0 (contact@urbanize.invalid)';
+const USE_GOOGLE_PLACES = !!process.env.GOOGLE_MAPS_API_KEY;
 
 export const worker = new Worker<TestJobData, JobReturnData, string>(
     DATA_FETCH_QUEUE_NAME,
@@ -28,24 +33,58 @@ export const worker = new Worker<TestJobData, JobReturnData, string>(
                 throw new UnrecoverableError(`Invalid job payload: ${validationResult.error.message}`);
             }
 
-            let query = job.data.query || '[out:json][timeout:25];node(51.5,-0.1,51.51,-0.09);out geom;';
-            // Ensure Overpass returns geometries so our WKT generation doesn't fail
+            // ── Derive spatial parameters ──────────────────────────────────────
+            let midLat = job.data.lat || 0;
+            let midLon = job.data.lon || 0;
+            let radiusKm = job.data.radiusKm || 2;
+            let areaSqKm = Math.PI * radiusKm * radiusKm;
+
+            // Build Overpass query. When GEE is active, omit building ways to avoid
+            // duplicating geometry we already get from Google Open Buildings.
+            // When Google Places is active, omit amenity/shop/leisure nodes.
+            let query = job.data.query;
+
+            if (!query && midLat !== undefined && midLon !== undefined && radiusKm !== undefined) {
+                const deltaLat = radiusKm / 111.32;
+                const deltaLon = radiusKm / (111.32 * Math.cos(midLat * (Math.PI / 180)));
+                const bbox = `${midLat - deltaLat},${midLon - deltaLon},${midLat + deltaLat},${midLon + deltaLon}`;
+                const dateFilter = job.data.year ? `[date:"${job.data.year}-01-01T00:00:00Z"]` : '';
+
+                const buildingQuery = isGeeConfigured() ? '' : `  way["building"](${bbox});\n`;
+                const poiQuery = USE_GOOGLE_PLACES ? '' : [
+                    `  node["amenity"](${bbox});`,
+                    `  way["amenity"](${bbox});`,
+                    `  node["shop"](${bbox});`,
+                    `  node["leisure"](${bbox});`,
+                    `  node["highway"="bus_stop"](${bbox});`,
+                    `  node["public_transport"](${bbox});`,
+                    `  node["highway"="taxi"](${bbox});`,
+                    `  relation["amenity"="taxi"](${bbox});`,
+                    `  node["amenity"="taxi"](${bbox});`,
+                ].join('\n');
+
+                query = `[out:json][timeout:90]${dateFilter};
+(
+${buildingQuery}  way["highway"](${bbox});
+${poiQuery}  way["landuse"](${bbox});
+);
+out geom;`;
+            }
+
+            if (!query) {
+                throw new UnrecoverableError('No query and no spatial parameters provided');
+            }
+
+            // Ensure Overpass returns geometries
             if (!query.includes('geom') && query.includes('out')) {
                 query = query.replace(/out(?:([^;\n]*))?;/g, (match, opts) => {
                     return (opts && opts.includes('geom')) ? match : `out ${opts || ''} geom;`.replace(/\s+/g, ' ');
                 });
             }
 
-            // Extract bbox for area evaluation: node(minLat,minLon,maxLat,maxLon)
+            // Extract bbox from query for area evaluation fallback
             const bboxMatch = query.match(/\(([-.\d]+)\s*,\s*([-.\d]+)\s*,\s*([-.\d]+)\s*,\s*([-.\d]+)\)/);
-            let areaSqKm = 10;
-            let midLat = job.data.lat || 0;
-            let midLon = job.data.lon || 0;
-            let radiusKm = job.data.radiusKm || 2;
-
-            if (job.data.lat && job.data.lon && job.data.radiusKm) {
-                areaSqKm = Math.PI * radiusKm * radiusKm;
-            } else if (bboxMatch) {
+            if (!job.data.lat && bboxMatch) {
                 const parts = bboxMatch.slice(1, 5).map(Number);
                 if (parts.length === 4 && !parts.some(isNaN)) {
                     const [minLat, minLon, maxLat, maxLon] = parts;
@@ -58,65 +97,48 @@ export const worker = new Worker<TestJobData, JobReturnData, string>(
                 }
             }
 
-            // Parametrize threshold
             const MIN_EXPECTED_DENSITY_PER_SQ_KM = 5;
+            const jobId = job.id || `fallback-${Date.now()}`;
 
-            // Cache Check
+            // ── Overpass cache check ───────────────────────────────────────────
             const cacheKey = `osm_cache:${crypto.createHash('sha256').update(query).digest('hex')}`;
             let cachedValue = null;
             try {
                 cachedValue = await redis.get(cacheKey);
             } catch (redisError) {
-                console.warn(`[Worker] Redis GET failed for ${cacheKey}, falling back to direct fetch. Error:`, redisError instanceof Error ? redisError.message : String(redisError));
+                console.warn(`[Worker] Redis GET failed for ${cacheKey}:`, redisError instanceof Error ? redisError.message : String(redisError));
             }
+
+            let osmElementCount = 0;
 
             if (cachedValue) {
                 const parsedCache = JSON.parse(cachedValue);
-                const elementsCount = parsedCache.elements?.length || 0;
+                osmElementCount = parsedCache.elements?.length || 0;
 
-                const density = elementsCount / (areaSqKm || 1);
-                const isLowConfidence = density < MIN_EXPECTED_DENSITY_PER_SQ_KM;
-
-                // M2 Fix: Cached path must also calculate and store density.
-                // Without this, repeated queries for the same area never persist a density row.
+                // Density must still be calculated on cache hit — rows are stored per-job
                 try {
-                    const densityResult = await calculateBuildingDensity({
-                        jobId: job.id || `fallback-${Date.now()}`,
-                        lat: midLat,
-                        lon: midLon,
-                        radiusKm
-                    });
-                    console.log(`[Worker] Calculated Building Density (CACHED path) for job ${job.id}: ${densityResult.buildingDensityPct.toFixed(2)}%`);
-
-                    const roadDensityResult = await calculateRoadDensity({
-                        jobId: job.id || `fallback-${Date.now()}`,
-                        lat: midLat,
-                        lon: midLon,
-                        radiusKm
-                    });
-                    console.log(`[Worker] Calculated Road Density (CACHED path) for job ${job.id}: ${roadDensityResult.roadDensity.toFixed(4)} km/km²`);
+                    const br = await calculateBuildingDensity({ jobId, lat: midLat, lon: midLon, radiusKm });
+                    console.log(`[Worker] Building density (CACHED) for ${jobId}: ${br.buildingDensityPct.toFixed(2)}%`);
+                    const rr = await calculateRoadDensity({ jobId, lat: midLat, lon: midLon, radiusKm });
+                    console.log(`[Worker] Road density (CACHED) for ${jobId}: ${rr.roadDensity.toFixed(4)} km/km²`);
                 } catch (densityError) {
-                    console.error(`[Worker] Error calculating building or road density (CACHED path) for job ${job.id}:`, densityError);
                     throw new Error(`Failed to calculate density: ${densityError instanceof Error ? densityError.message : String(densityError)}`);
                 }
 
-                console.log(`[Worker] Finished processing job ${job.id} (CACHED). Elements found: ${elementsCount}, Density: ${density.toFixed(2)}, LowConf: ${isLowConfidence}`);
+                const density = osmElementCount / (areaSqKm || 1);
+                console.log(`[Worker] Job ${jobId} done (CACHED). OSM elements: ${osmElementCount}, density: ${density.toFixed(2)}`);
                 return {
                     success: true,
                     processedAt: new Date().toISOString(),
-                    dataStats: {
-                        elements: elementsCount,
-                        lowConfidence: isLowConfidence
-                    }
+                    dataStats: { elements: osmElementCount, lowConfidence: density < MIN_EXPECTED_DENSITY_PER_SQ_KM },
                 };
             }
 
+            // ── Overpass fetch ─────────────────────────────────────────────────
             const timeoutMatch = query.match(/\[timeout:(\d+)\]/);
-            const dynamicTimeoutSecs = timeoutMatch ? parseInt(timeoutMatch[1], 10) : 30; // 30s default
-            const timeoutMs = dynamicTimeoutSecs * 1000;
-
+            const dynamicTimeoutSecs = timeoutMatch ? parseInt(timeoutMatch[1], 10) : 30;
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+            const timeoutId = setTimeout(() => controller.abort(), dynamicTimeoutSecs * 1000);
 
             let response;
             try {
@@ -124,118 +146,135 @@ export const worker = new Worker<TestJobData, JobReturnData, string>(
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded',
-                        'User-Agent': USER_AGENT
+                        'User-Agent': USER_AGENT,
                     },
                     body: `data=${encodeURIComponent(query)}`,
-                    signal: controller.signal
+                    signal: controller.signal,
                 });
             } catch (err: any) {
-                if (err.name === 'AbortError') {
-                    throw new Error('Overpass API request timed out');
-                }
+                if (err.name === 'AbortError') throw new Error('Overpass API request timed out');
                 throw err;
             } finally {
                 clearTimeout(timeoutId);
             }
 
             if (response.status === 429) {
-                console.warn(`[Worker] Overpass API rate limit hit (429) for job ${job.id}`);
+                console.warn(`[Worker] Overpass rate limit (429) for job ${jobId}`);
                 throw new Error('Rate limit exceeded (429)');
             }
-
             if (!response.ok) {
                 throw new UnrecoverableError(`Overpass API error: ${response.status} ${response.statusText}`);
             }
 
             const json = await response.json();
-
             const parsedResult = OsmResponseSchema.safeParse(json);
             if (!parsedResult.success) {
-                throw new UnrecoverableError(`Malformed Overpass API response: ${parsedResult.error.message}`);
+                throw new UnrecoverableError(`Malformed Overpass response: ${parsedResult.error.message}`);
             }
 
             const parsedData = parsedResult.data;
-            const elementsCount = parsedData.elements.length;
+            osmElementCount = parsedData.elements.length;
 
-            const density = elementsCount / (areaSqKm || 1);
-            const isLowConfidence = density < MIN_EXPECTED_DENSITY_PER_SQ_KM;
-
-            // Geometry processing and insertion
-            const geometries = [];
+            // Build OSM geometry rows
+            const osmGeometries: { osmId: number; osmType: string; tags: any; wkt: string }[] = [];
             for (const element of parsedData.elements) {
                 const wkt = elementToWkt(element);
-
                 if (wkt) {
-                    geometries.push({
-                        osmId: element.id,
-                        osmType: element.type,
-                        tags: element.tags || {},
-                        wkt
-                    });
+                    osmGeometries.push({ osmId: element.id, osmType: element.type, tags: element.tags || {}, wkt });
                 }
             }
 
-            if (geometries.length > 0) {
+            // ── Google Earth Engine — building footprints ──────────────────────
+            let geeBuildings: typeof osmGeometries = [];
+            if (isGeeConfigured()) {
                 try {
-                    await processAndInsertGeometry(geometries, job.data.year);
-                    console.log(`[Worker] Inserted ${geometries.length} geometries for job ${job.id}`);
+                    const rawBuildings = await fetchOpenBuildings(midLat, midLon, radiusKm);
+                    geeBuildings = rawBuildings.map(b => ({
+                        osmId: b.osmId,
+                        osmType: b.osmType,
+                        tags: b.tags,
+                        wkt: b.wkt,
+                    }));
+                    console.log(`[Worker] GEE Open Buildings for job ${jobId}: ${geeBuildings.length} footprints`);
+                } catch (geeError) {
+                    console.warn(`[Worker] GEE fetch failed, skipping (will use OSM buildings if any):`, geeError instanceof Error ? geeError.message : geeError);
+                }
+            }
+
+            // ── Google Places — POI nodes ──────────────────────────────────────
+            let placesGeometries: typeof osmGeometries = [];
+            if (USE_GOOGLE_PLACES && !job.data.year) {
+                // Google Places does not support historical queries — skip for Time Travel jobs
+                try {
+                    const places = await fetchAllPlacesForArea(midLat, midLon, radiusKm);
+                    for (let i = 0; i < places.length; i++) {
+                        const p = places[i];
+                        // Use a deterministic negative ID derived from the place_id hash
+                        const hash = crypto.createHash('sha256').update(p.placeId).digest();
+                        const osmId = -(Math.abs(hash.readInt32BE(0)) + 1);
+                        placesGeometries.push({
+                            osmId,
+                            osmType: 'node',
+                            tags: p.tags,
+                            wkt: `POINT(${p.lon} ${p.lat})`,
+                        });
+                    }
+                    console.log(`[Worker] Google Places for job ${jobId}: ${placesGeometries.length} POIs`);
+                } catch (placesError) {
+                    console.warn(`[Worker] Google Places fetch failed, skipping:`, placesError instanceof Error ? placesError.message : placesError);
+                }
+            }
+
+            // ── Insert all geometries ──────────────────────────────────────────
+            const allGeometries = [...osmGeometries, ...geeBuildings, ...placesGeometries];
+            if (allGeometries.length > 0) {
+                try {
+                    await processAndInsertGeometry(allGeometries, job.data.year);
+                    console.log(`[Worker] Inserted ${allGeometries.length} geometries for job ${jobId} (OSM: ${osmGeometries.length}, GEE: ${geeBuildings.length}, Places: ${placesGeometries.length})`);
                 } catch (dbError) {
-                    console.error(`[Worker] Error inserting geometries for job ${job.id}:`, dbError);
                     throw new Error(`Failed to insert geometries: ${dbError instanceof Error ? dbError.message : String(dbError)}`);
                 }
             }
 
-            // Calculate Building Density
-            // H3 Fix: radiusKm is now correctly derived above from bbox half-diagonal.
+            // ── Density calculations ───────────────────────────────────────────
             try {
-                const densityResult = await calculateBuildingDensity({
-                    jobId: job.id || `fallback-${Date.now()}`,
-                    lat: midLat,
-                    lon: midLon,
-                    radiusKm
-                });
-                console.log(`[Worker] Calculated Building Density for job ${job.id}: ${densityResult.buildingDensityPct.toFixed(2)}%`);
+                const br = await calculateBuildingDensity({ jobId, lat: midLat, lon: midLon, radiusKm });
+                console.log(`[Worker] Building density for job ${jobId}: ${br.buildingDensityPct.toFixed(2)}%`);
             } catch (densityError) {
-                // H2 Fix: Density failure must propagate — a successful job requires a stored density.
-                // Previously swallowed silently (and the comment about caching was backwards —
-                // cache write happens AFTER density).
-                console.error(`[Worker] Error calculating building density for job ${job.id}:`, densityError);
                 throw new Error(`Failed to calculate building density: ${densityError instanceof Error ? densityError.message : String(densityError)}`);
             }
 
             try {
-                const roadDensityResult = await calculateRoadDensity({
-                    jobId: job.id || `fallback-${Date.now()}`,
-                    lat: midLat,
-                    lon: midLon,
-                    radiusKm
-                });
-                console.log(`[Worker] Calculated Road Density for job ${job.id}: ${roadDensityResult.roadDensity.toFixed(2)} km/km²`);
+                const rr = await calculateRoadDensity({ jobId, lat: midLat, lon: midLon, radiusKm });
+                console.log(`[Worker] Road density for job ${jobId}: ${rr.roadDensity.toFixed(2)} km/km²`);
             } catch (densityError) {
-                console.error(`[Worker] Error calculating road density for job ${job.id}:`, densityError);
                 throw new Error(`Failed to calculate road density: ${densityError instanceof Error ? densityError.message : String(densityError)}`);
             }
 
-            // Cache Write
+            // ── Cache OSM response ─────────────────────────────────────────────
             try {
                 const cachePayload = { ...parsedData, _cachedAt: new Date().toISOString() };
-                await redis.set(cacheKey, JSON.stringify(cachePayload), 'EX', 60 * 60 * 24); // Cache for 24 hours
+                await redis.set(cacheKey, JSON.stringify(cachePayload), 'EX', 60 * 60 * 24);
             } catch (redisError) {
-                console.warn(`[Worker] Redis SET failed for ${cacheKey}. Error:`, redisError instanceof Error ? redisError.message : String(redisError));
+                console.warn(`[Worker] Redis SET failed for ${cacheKey}:`, redisError instanceof Error ? redisError.message : String(redisError));
             }
 
-            console.log(`[Worker] Finished processing job ${job.id}. Elements found: ${elementsCount}, Density: ${density.toFixed(2)}, LowConf: ${isLowConfidence}`);
+            const density = osmElementCount / (areaSqKm || 1);
+            console.log(`[Worker] Job ${jobId} done. OSM: ${osmElementCount}, GEE: ${geeBuildings.length}, Places: ${placesGeometries.length}, density: ${density.toFixed(2)}`);
+
             return {
                 success: true,
                 processedAt: new Date().toISOString(),
                 dataStats: {
-                    elements: elementsCount,
-                    lowConfidence: isLowConfidence
-                }
+                    elements: osmElementCount,
+                    geeBuildings: geeBuildings.length,
+                    googlePlaces: placesGeometries.length,
+                    lowConfidence: density < MIN_EXPECTED_DENSITY_PER_SQ_KM && geeBuildings.length === 0,
+                },
             };
         } catch (error: any) {
             console.error(`[Worker] Error processing job ${job.id}:`, error.message);
-            throw error; // Re-throw to trigger BullMQ failure handling
+            throw error;
         }
     },
     {

@@ -31,15 +31,24 @@ Copy `.env.example` to `.env.local`. Required variables:
 
 **Docker** (optional local stack): `docker-compose up -d` starts PostgreSQL 16 + PostGIS on port **5433** and Redis 7 on port **6380** with persistent volumes. Credentials: `urbanize_user` / `urbanize_pass` / db `urbanize`.
 
+**Optional enhanced data sources** (all server-side only, graceful degradation if absent):
+- `GOOGLE_MAPS_API_KEY` — enables Google Places API for POI data (much better coverage than OSM in Ghana). Enable *Places API (New)* in Google Cloud Console.
+- `GEE_SERVICE_ACCOUNT_JSON` + `GEE_PROJECT` — enables Google Earth Engine for building footprints via *Google Open Buildings V3* dataset. Service account needs `roles/earthengine.viewer`. GEE buildings use negative `osm_id` values to avoid collisions with OSM data.
+- `HERE_API_KEY` — enables HERE Traffic Flow API v7 for real-time traffic speed and congestion metrics. Enable *Traffic API* at developer.here.com.
+
 ## Architecture
 
 ### Request / Job Flow
 
 1. User draws a circle on the map → `BaseMap` POSTs to `POST /api/analyze` with `{ lat, lon, radiusKm, year? }`
-2. API generates an Overpass QL query (buildings, highways, amenities, shops, leisure, landuse, bus stops, taxi) and enqueues a BullMQ job on `data-fetch-queue`
+2. API generates an Overpass QL query and enqueues a BullMQ job on `data-fetch-queue`
 3. `BaseMap` polls `GET /api/analyze/[jobId]` every 2 s
-4. The **worker** (`worker/index.ts`) processes jobs: fetches from Overpass API → inserts geometries into PostGIS → calculates building & road density → writes results to `urban_parameters`
-5. On completion, `BaseMap` fetches `/geometries` and `/extended-metrics` in parallel, then renders layers + full metrics panel
+4. The **worker** (`worker/index.ts`) processes jobs with a layered data fetch strategy:
+   - **Roads**: always from Overpass (`way["highway"]`)
+   - **Buildings**: from **Google Earth Engine** (Open Buildings V3) if `GEE_SERVICE_ACCOUNT_JSON`+`GEE_PROJECT` set; otherwise from Overpass `way["building"]`. When GEE is active, building ways are omitted from the Overpass query to avoid duplication.
+   - **POIs**: from **Google Places API** (Nearby Search, all types) if `GOOGLE_MAPS_API_KEY` set; otherwise from Overpass amenity/shop/leisure nodes. Places fetch is skipped for Time Travel (historical) jobs since Google Places has no historical data.
+   - All three geometry sets are merged and inserted into PostGIS, then building + road density is calculated.
+5. On completion, `BaseMap` fetches `/geometries` and `/extended-metrics` in parallel, then renders layers + full metrics panel. Also fires `GET /api/traffic` (fire-and-forget, 204 if HERE not configured).
 
 **Time Travel mode** dispatches two jobs (yearA past, yearB present) via Overpass Attic (`[date:"YYYY-01-01T00:00:00Z"]`). `TimelineSelector` also calls `GET /api/data-availability` to colour-code year availability. On completion, `BaseMap` fetches `/api/analyze/diff` and year-filtered geometries for both jobs, renders a split-screen map and `ComparisonCard`.
 
@@ -54,6 +63,8 @@ Copy `.env.example` to `.env.local`. Required variables:
 | `GET` | `/api/analyze/diff?jobAId=&jobBId=` | Delta metrics for Time Travel comparison |
 | `GET` | `/api/export/csv?jobAId=&jobBId=` | CSV download with citation header |
 | `GET` | `/api/data-availability?lat=&lon=&radiusKm=` | Year availability for timeline UI |
+| `GET` | `/api/places/nearby?lat=&lon=&amenity=` | Google Places enrichment for clicked POI; 204 if key absent |
+| `GET` | `/api/traffic?lat=&lon=&radiusKm=` | HERE Traffic flow metrics; 204 if key absent |
 
 ### Extended Metrics (`src/lib/extended-metrics.ts`)
 
@@ -73,8 +84,8 @@ Road intersections use `ST_Node` topology; proximity distances use `::geography`
 - `src/app/api/` — Route Handlers (server-only)
 - `src/app/(dashboard)/map/` — Main map page
 - `src/app/(auth)/` — Clerk sign-in/sign-up pages
-- `src/features/map/components/` — All map UI: `BaseMap` (orchestrator), `CircleDrawer`, `CitySearch`, `DrawControl`, `AnalysisLayers` (buildings + roads + POI markers), `MetricsPanel` (full scrollable metrics), `LayerToggle`, `TimelineSelector`, `SplitScreenMap`, `ComparisonCard`
-- `src/lib/` — `queue.ts`, `redis.ts`, `job-schema.ts`, `geometry.ts`, `density.ts`, `extended-metrics.ts`
+- `src/features/map/components/` — All map UI: `BaseMap` (orchestrator), `CircleDrawer`, `CitySearch`, `DrawControl`, `AnalysisLayers` (buildings + roads + POI markers), `MetricsPanel` (full scrollable metrics), `FeatureDetailPanel` (click-to-detail popup), `LayerToggle`, `TimelineSelector`, `SplitScreenMap`, `ComparisonCard`
+- `src/lib/` — `queue.ts`, `redis.ts`, `job-schema.ts`, `geometry.ts`, `density.ts`, `extended-metrics.ts`, `google-places.ts`, `earth-engine.ts`
 - `src/db/` — Kysely singleton, type definitions, migration runner, migrations
 - `worker/index.ts` — BullMQ Worker; rate-limited to 1 job / 2 s; Overpass responses cached in Redis 24 h (cache key = SHA256 of query). On a cache hit the Overpass fetch is skipped but density calculations still run to persist `urban_parameters`. Invalid payloads throw `UnrecoverableError` (no retry); 429s throw standard `Error` (retried with exponential backoff, 3 attempts).
 - `tests/` — Node.js built-in test runner (`tsx --test`)
@@ -103,23 +114,27 @@ Clerk middleware protects all routes except `(auth)` pages. Dashboard at `/map`.
 
 `src/components/ui/` — shadcn/ui primitives. Feature components in `src/features/map/components/` only.
 
+### Feature Click Interaction
+
+Clicking any building, road, or POI marker on the map opens `FeatureDetailPanel` (bottom-left, replaces the legend). For POI clicks, `BaseMap` calls `GET /api/places/nearby` to enrich the OSM/GEE data with live Google Places details (rating, address, hours, website, phone). The legend reappears when the panel is dismissed.
+
+`interactiveLayerIds` on `<Map>` is only set when `analysisStatus === 'completed'` to avoid interfering with the drawing interaction. Cursor changes to `pointer` on hover via `onMouseMove` → `map.getCanvas().style.cursor`.
+
 ## Known Blockers & Non-Achievable Parameters
 
-These parameters were requested but **cannot be sourced from OpenStreetMap**:
-
-| Parameter | Blocker | Would require |
+| Parameter | Status | Notes |
 |---|---|---|
-| Peak-hour traffic volume | OSM has no traffic counts | Google Roads API, HERE Traffic, TomTom |
-| 24-hr average daily traffic (ADT) | OSM has no traffic counts | Same |
-| Average / 85th percentile speed | No speed data in OSM | Google Maps Platform, traffic sensors |
-| Level of Service (LOS) | No volume/capacity data | Same |
-| Population / household count | Not in OSM | WorldPop, Ghana Statistical Service census |
-| Land / property values | Not in OSM | Ghana Lands Commission |
-| Electricity grid coverage | Sparse in OSM for Ghana | ECG (Electricity Company of Ghana) |
+| Traffic speed / congestion | **Implemented** via HERE Traffic API (`HERE_API_KEY`) | Returns avg speed, jam factor, congestion % |
+| Peak-hour traffic volume / ADT | Partial — HERE provides flow, not counts | HERE Historical Traffic (enterprise tier) needed for ADT |
+| Level of Service (LOS) | Not available | Requires volume + capacity data |
+| Population / household count | Not available | WorldPop, Ghana Statistical Service census |
+| Land / property values | Not available | Ghana Lands Commission |
+| Electricity grid coverage | Sparse in OSM | ECG (Electricity Company of Ghana) |
 | Water / drainage networks | Not mapped in Ghana OSM | GWCL, municipal authorities |
 
-**OSM data quality notes for Ghana**:
-- Road `surface` tags sparsely applied → tarred/untarred split will undercount
-- `building:levels` / `building:height` rarely set → those metrics will be null for most analyses
-- Overpass Attic reliable from ~2013 for Ghana; pre-2013 Time Travel queries return sparse data
-- Good OSM coverage: Accra, Kumasi main roads and amenities. Patchy: residential buildings, smaller towns
+**Data source quality notes for Ghana**:
+- **Buildings**: Google Open Buildings V3 (GEE) has ~99% recall in Ghana vs very sparse OSM coverage — strongly preferred. GEE buildings use negative `osm_id` values.
+- **POIs**: Google Places API returns much richer, more current data than OSM for Ghana. Google Places fetch is skipped for Time Travel jobs (no historical POI data from Google).
+- **Roads**: OSM remains the best source for road networks. `surface` tags are sparse → tarred/untarred underestimates.
+- **Building height/levels**: rarely tagged in OSM Ghana → `avgBuildingLevels` / `avgBuildingHeightM` will be null for most analyses.
+- Overpass Attic reliable from ~2013 for Ghana; pre-2013 Time Travel returns sparse data.

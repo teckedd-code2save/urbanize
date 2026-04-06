@@ -2,9 +2,10 @@
 
 import * as React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, Activity, Building2, Route, MapPin, Trees, Heart, GraduationCap, ShoppingBag, Bus, Landmark, Info, ChevronDown, ChevronRight } from 'lucide-react';
+import { Loader2, Activity, Building2, Route, MapPin, Trees, Heart, GraduationCap, ShoppingBag, Bus, Landmark, Info, ChevronDown, ChevronRight, Gauge } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type { ExtendedMetrics, ProximityMetrics } from '@/lib/extended-metrics';
+import type { TrafficMetrics } from '@/app/api/traffic/route';
 
 // ── Primitive components ───────────────────────────────────────────────────────
 
@@ -111,9 +112,10 @@ interface MetricsPanelProps {
         readonly roadDensity: number | null;
     } | null;
     readonly extendedMetrics?: ExtendedMetrics | null;
+    readonly trafficMetrics?: TrafficMetrics | null;
 }
 
-export function MetricsPanel({ status, metrics, extendedMetrics }: MetricsPanelProps) {
+export function MetricsPanel({ status, metrics, extendedMetrics, trafficMetrics }: MetricsPanelProps) {
     if (status === 'idle') return null;
 
     const em = extendedMetrics;
@@ -233,8 +235,40 @@ export function MetricsPanel({ status, metrics, extendedMetrics }: MetricsPanelP
                                 </>
                             )}
 
+                            {/* ── Traffic (HERE API, optional) ──────────── */}
+                            {trafficMetrics && trafficMetrics.segmentCount > 0 && (
+                                <Section icon={<Gauge className="h-3.5 w-3.5" />} title="Traffic Flow">
+                                    <MetricRow
+                                        label="Avg. speed"
+                                        value={trafficMetrics.avgSpeedKmh ?? '—'}
+                                        unit={trafficMetrics.avgSpeedKmh !== null ? 'km/h' : undefined}
+                                        tip="Average current speed across road segments (HERE Traffic API)"
+                                    />
+                                    <MetricRow
+                                        label="Free-flow speed"
+                                        value={trafficMetrics.avgFreeFlowKmh ?? '—'}
+                                        unit={trafficMetrics.avgFreeFlowKmh !== null ? 'km/h' : undefined}
+                                        tip="Average uncongested speed (baseline)"
+                                    />
+                                    <MetricRow
+                                        label="Congestion"
+                                        value={trafficMetrics.peakCongestionPct ?? '—'}
+                                        unit={trafficMetrics.peakCongestionPct !== null ? '%' : undefined}
+                                        bar={trafficMetrics.peakCongestionPct ?? undefined}
+                                        tip="(1 − current/freeflow) × 100 — proxy for peak congestion"
+                                    />
+                                    <MetricRow
+                                        label="Jam factor"
+                                        value={trafficMetrics.avgJamFactor ?? '—'}
+                                        unit={trafficMetrics.avgJamFactor !== null ? '/ 10' : undefined}
+                                        tip="0 = free flow, 10 = standstill (HERE jam factor)"
+                                    />
+                                    <MetricRow label="Segments" value={trafficMetrics.segmentCount.toLocaleString()} />
+                                </Section>
+                            )}
+
                             <p className="text-[10px] text-muted-foreground/50 text-center font-mono pt-1">
-                                Source: OpenStreetMap · Urbanize v1.0
+                                Sources: OSM{trafficMetrics ? ' · HERE Traffic' : ''} · Urbanize v1.0
                             </p>
                         </div>
                     </TooltipProvider>
