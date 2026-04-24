@@ -1,11 +1,20 @@
-# Provenance record. Files here are Convoy-authored and may be
-# iterated on autonomously during rehearsal and medic.
-# If a developer edits any of these, provenance flips permanently.
+# .convoy/manifest.yaml
+# Convoy only touches files listed here. Everything else is developer-owned.
 version: 1
-files:
-  - path: Dockerfile
-    authored_by: convoy
-  - path: fly.toml
-    authored_by: convoy
+project: urbanize
+platform: fly
+topology: web+worker
+owned_files:
   - path: .env.schema
-    authored_by: convoy
+    purpose: required environment variable contract
+  - path: .convoy/manifest.yaml
+    purpose: self — tracks Convoy-owned files
+unowned_but_detected:
+  - path: Dockerfile
+    note: developer-authored, node:20-alpine — not modified
+  - path: fly.toml
+    note: developer-authored — not modified
+rehearsal:
+  target: fly-ephemeral
+  region: iad
+  smoke: "tsx --env-file=.env.local --test tests/**/*.test.ts"
